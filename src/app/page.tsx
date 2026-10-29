@@ -4,20 +4,21 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   GitCommit,
   Share2,
-  Sparkles,
   CheckCircle2,
   ExternalLink,
-  Layers,
   Send,
   RefreshCw,
   Terminal,
   Copy,
-  ChevronRight,
-  Eye,
+  Image as ImageIcon,
   Sliders,
   AlertCircle,
   LogOut,
-  Zap
+  Zap,
+  Sparkles,
+  FileCode,
+  Layers,
+  ArrowUpRight
 } from 'lucide-react';
 import { PostTone, SocialPlatform } from '@/lib/generator/postGenerator';
 
@@ -62,9 +63,11 @@ interface PublishResult {
 export default function GitSocialApp() {
   // Buffer OAuth state
   const [bufferConnected, setBufferConnected] = useState<boolean>(false);
-  const [bufferLoading, setBufferLoading] = useState<boolean>(true);
   const [channels, setChannels] = useState<BufferChannel[]>([]);
   const [selectedChannels, setSelectedChannels] = useState<string[]>([]);
+
+  // Navigation tab
+  const [currentNav, setCurrentNav] = useState<'studio' | 'webhook'>('studio');
 
   // GitHub State
   const [repoInput, setRepoInput] = useState<string>('bufferapp/buffer-sample-apps');
@@ -76,16 +79,17 @@ export default function GitSocialApp() {
     repo: 'buffer-sample-apps',
   });
 
-  // Post generation & customisation state
-  const [activePlatform, setActivePlatform] = useState<SocialPlatform>('linkedin');
+  // Post editor state (per platform)
   const [tone, setTone] = useState<PostTone>('punchy');
-  const [editedText, setEditedText] = useState<string>('');
+  const [editedPosts, setEditedPosts] = useState<Record<SocialPlatform, string>>({
+    linkedin: '',
+    twitter: '',
+    bluesky: '',
+    threads: '',
+  });
   const [includeImageCard, setIncludeImageCard] = useState<boolean>(true);
 
-  // Tab mode: Studio vs Webhook Automation
-  const [activeTab, setActiveTab] = useState<'studio' | 'webhook'>('studio');
-
-  // Publishing status
+  // Statuses
   const [publishing, setPublishing] = useState<boolean>(false);
   const [publishResult, setPublishResult] = useState<PublishResult | null>(null);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -109,9 +113,15 @@ export default function GitSocialApp() {
 
       if (fetchedReleases.length > 0) {
         setSelectedReleaseIndex(0);
-        const firstRelease = fetchedReleases[0];
-        const defaultText = firstRelease.bundle?.variants['linkedin']?.text || '';
-        setEditedText(defaultText);
+        const variants = fetchedReleases[0].bundle?.variants;
+        if (variants) {
+          setEditedPosts({
+            linkedin: variants.linkedin.text,
+            twitter: variants.twitter.text,
+            bluesky: variants.bluesky.text,
+            threads: variants.threads.text,
+          });
+        }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error loading repository';
@@ -122,33 +132,29 @@ export default function GitSocialApp() {
   }, []);
 
   const checkBufferAuth = useCallback(async () => {
-    setBufferLoading(true);
     try {
       const res = await fetch('/api/buffer/channels');
       const data = await res.json();
-      if (data.connected && data.channels) {
+      if (data.connected && data.channels && data.channels.length > 0) {
         setBufferConnected(true);
         setChannels(data.channels);
         setSelectedChannels(data.channels.map((c: BufferChannel) => c.id));
       } else {
         setBufferConnected(false);
         const mockChannels: BufferChannel[] = [
-          { id: 'mock-li', name: 'LinkedIn Company Page', service: 'linkedin' },
-          { id: 'mock-tw', name: 'X / Twitter Profile', service: 'twitter' },
-          { id: 'mock-bs', name: 'Bluesky Handle', service: 'bluesky' },
-          { id: 'mock-th', name: 'Threads Account', service: 'threads' },
+          { id: 'mock-tw', name: 'kingmatt_MO', service: 'twitter' },
+          { id: 'mock-li', name: 'Matthew Ọbàńlá', service: 'linkedin' },
+          { id: 'mock-bs', name: 'kingmatt.mo', service: 'bluesky' },
+          { id: 'mock-th', name: 'kingmatt.mo', service: 'threads' },
         ];
         setChannels(mockChannels);
         setSelectedChannels(mockChannels.map((c) => c.id));
       }
     } catch {
       setBufferConnected(false);
-    } finally {
-      setBufferLoading(false);
     }
   }, []);
 
-  // 1. Initial Load: Check Buffer OAuth & Load sample repo
   useEffect(() => {
     checkBufferAuth();
     fetchReleases('bufferapp', 'buffer-sample-apps', 'punchy');
@@ -160,14 +166,18 @@ export default function GitSocialApp() {
     checkBufferAuth();
   }
 
-  // Update text when switching release, tone, or platform
   const currentRelease = releases[selectedReleaseIndex];
 
   useEffect(() => {
-    if (currentRelease?.bundle?.variants[activePlatform]) {
-      setEditedText(currentRelease.bundle.variants[activePlatform].text);
+    if (currentRelease?.bundle?.variants) {
+      setEditedPosts({
+        linkedin: currentRelease.bundle.variants.linkedin.text,
+        twitter: currentRelease.bundle.variants.twitter.text,
+        bluesky: currentRelease.bundle.variants.bluesky.text,
+        threads: currentRelease.bundle.variants.threads.text,
+      });
     }
-  }, [activePlatform, selectedReleaseIndex, currentRelease]);
+  }, [selectedReleaseIndex, currentRelease]);
 
   function handleToneChange(newTone: PostTone) {
     setTone(newTone);
@@ -182,14 +192,14 @@ export default function GitSocialApp() {
     if (parts.length === 2 && parts[0] && parts[1]) {
       fetchReleases(parts[0], parts[1], tone);
     } else {
-      setErrorMessage('Please enter repository in "owner/repo" format (e.g. vercel/next.js)');
+      setErrorMessage('Please enter repository in "owner/repo" format (e.g. facebook/react)');
     }
   }
 
-  // 3. Publish to Buffer
-  async function handlePublishToBuffer(saveToDraft: boolean = true) {
+  // Publish to Buffer
+  async function handlePublishToBuffer(saveToDraft: boolean = true, targetText?: string) {
     if (selectedChannels.length === 0) {
-      setErrorMessage('Please select at least one channel to queue this post.');
+      setErrorMessage('Please select at least one channel from the sidebar.');
       return;
     }
 
@@ -205,13 +215,15 @@ export default function GitSocialApp() {
         )}&highlight=${encodeURIComponent(currentRelease.features[0] || 'Release update')}`
       : undefined;
 
+    const postContent = targetText || editedPosts.linkedin || editedPosts.twitter;
+
     try {
       const res = await fetch('/api/buffer/publish', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           channelIds: selectedChannels,
-          text: editedText,
+          text: postContent,
           mediaUrl: cardUrl,
           saveToDraft,
         }),
@@ -241,475 +253,519 @@ export default function GitSocialApp() {
       )}`
     : '';
 
+  const getPlatformIcon = (service: string) => {
+    switch (service.toLowerCase()) {
+      case 'twitter':
+      case 'x':
+        return <span className="text-[10px] font-bold text-white">𝕏</span>;
+      case 'linkedin':
+        return <span className="text-[10px] font-bold text-blue-400">in</span>;
+      case 'bluesky':
+        return <span className="text-[10px] font-bold text-sky-400">🦋</span>;
+      default:
+        return <Layers className="w-3 h-3 text-neutral-400" />;
+    }
+  };
+
   return (
-    <div className="min-h-screen flex flex-col bg-[#070b14] text-slate-100 antialiased">
-      {/* Top Navigation */}
-      <header className="border-b border-slate-800 bg-[#0d1322]/80 backdrop-blur-md sticky top-0 z-50 px-6 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-blue-600 via-indigo-600 to-sky-400 flex items-center justify-center shadow-lg shadow-blue-500/20">
-              <GitCommit className="w-6 h-6 text-white" />
+    <div className="flex h-screen w-screen overflow-hidden bg-[#0c0d10] text-[#f4f4f6]">
+      {/* 1. LEFT SIDEBAR (Buffer Style) */}
+      <aside className="w-64 flex-shrink-0 bg-[#121316] border-r border-[#24262c] flex flex-col justify-between select-none">
+        {/* Top: Logo & Nav */}
+        <div className="p-4 space-y-5">
+          {/* Brand header */}
+          <div className="flex items-center justify-between px-1">
+            <div className="flex items-center space-x-2.5">
+              <div className="w-7 h-7 rounded-lg bg-neutral-100 flex items-center justify-center text-neutral-900 shadow-sm">
+                <GitCommit className="w-4 h-4 text-black stroke-[2.5]" />
+              </div>
+              <span className="font-semibold text-sm tracking-tight text-white">GitSocial</span>
             </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-xl tracking-tight text-white">GitSocial</span>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-400 font-medium border border-blue-500/20">
-                  Buffer Commit Edition
+            <span className="text-[10px] font-mono uppercase bg-[#202227] text-neutral-400 px-1.5 py-0.5 rounded border border-[#2e3038]">
+              API
+            </span>
+          </div>
+
+          {/* Action Button (Buffer "+ New" pill aesthetic) */}
+          <button
+            onClick={() => {
+              setRepoInput('bufferapp/buffer-sample-apps');
+              fetchReleases('bufferapp', 'buffer-sample-apps', tone);
+            }}
+            className="w-full bg-[#f4f4f6] hover:bg-white text-neutral-950 text-xs font-semibold py-2 px-3 rounded-lg flex items-center justify-center space-x-1.5 transition shadow-sm"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Generate Posts</span>
+          </button>
+
+          {/* Primary Navigation List */}
+          <nav className="space-y-1">
+            <button
+              onClick={() => setCurrentNav('studio')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
+                currentNav === 'studio'
+                  ? 'bg-[#1e2025] text-white'
+                  : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#18191d]'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <FileCode className="w-4 h-4 text-neutral-400" />
+                <span>Changelog Studio</span>
+              </div>
+              {releases.length > 0 && (
+                <span className="text-[11px] font-mono text-neutral-400 bg-[#252830] px-1.5 py-0.2 rounded">
+                  {releases.length}
                 </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setCurrentNav('webhook')}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium transition ${
+                currentNav === 'webhook'
+                  ? 'bg-[#1e2025] text-white'
+                  : 'text-neutral-400 hover:text-neutral-200 hover:bg-[#18191d]'
+              }`}
+            >
+              <div className="flex items-center space-x-2.5">
+                <Zap className="w-4 h-4 text-neutral-400" />
+                <span>Automated Webhook</span>
               </div>
-              <p className="text-xs text-slate-400">Automate your social releases via Buffer API</p>
+              <span className="text-[10px] text-emerald-400 font-mono">LIVE</span>
+            </button>
+          </nav>
+
+          {/* Channels Section (Exact Buffer Dashboard Sidebar Item) */}
+          <div className="pt-3 border-t border-[#24262c] space-y-2">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[11px] font-medium text-neutral-400 uppercase tracking-wider">Channels</span>
+              <span className="text-[10px] text-neutral-500 font-mono">
+                {selectedChannels.length}/{channels.length}
+              </span>
+            </div>
+
+            <div className="space-y-1">
+              {channels.map((ch) => {
+                const isSelected = selectedChannels.includes(ch.id);
+                return (
+                  <div
+                    key={ch.id}
+                    onClick={() => {
+                      if (isSelected) {
+                        setSelectedChannels(selectedChannels.filter((id) => id !== ch.id));
+                      } else {
+                        setSelectedChannels([...selectedChannels, ch.id]);
+                      }
+                    }}
+                    className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition ${
+                      isSelected
+                        ? 'bg-[#1b1c21] text-white border border-[#2e3037]'
+                        : 'text-neutral-400 hover:bg-[#16171b] hover:text-neutral-300'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-2.5 truncate">
+                      {/* Avatar with service badge */}
+                      <div className="relative w-6 h-6 rounded-md bg-[#23252b] flex items-center justify-center flex-shrink-0 text-[10px] font-bold text-neutral-300 border border-[#2a2c34]">
+                        {ch.name.slice(0, 1).toUpperCase()}
+                        <span className="absolute -bottom-1 -right-1 w-3 h-3 rounded-full bg-[#121316] flex items-center justify-center">
+                          {getPlatformIcon(ch.service)}
+                        </span>
+                      </div>
+                      <span className="truncate text-xs">{ch.name}</span>
+                    </div>
+
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => {}}
+                      className="w-3.5 h-3.5 rounded border-[#3a3d46] bg-[#1a1b20] accent-white"
+                    />
+                  </div>
+                );
+              })}
             </div>
           </div>
+        </div>
 
-          {/* Buffer OAuth Status Pill */}
-          <div className="flex items-center space-x-4">
-            {bufferLoading ? (
-              <div className="text-xs text-slate-400 flex items-center space-x-2">
-                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                <span>Checking Buffer...</span>
-              </div>
-            ) : bufferConnected ? (
-              <div className="flex items-center space-x-3">
-                <div className="flex items-center space-x-2 bg-emerald-500/10 border border-emerald-500/30 px-3 py-1.5 rounded-lg text-xs text-emerald-400 font-medium">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  <span>Buffer Connected ({channels.length} channels)</span>
+        {/* Bottom: Organization & Auth Status */}
+        <div className="p-3 border-t border-[#24262c] bg-[#101114]">
+          {bufferConnected ? (
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2 truncate">
+                <div className="w-7 h-7 rounded-md bg-[#24262c] flex items-center justify-center text-xs font-semibold text-neutral-300">
+                  MO
                 </div>
-                <button
-                  onClick={handleBufferLogout}
-                  className="text-xs text-slate-400 hover:text-rose-400 p-1.5 transition"
-                  title="Disconnect Buffer"
-                >
-                  <LogOut className="w-4 h-4" />
-                </button>
+                <div className="truncate">
+                  <p className="text-xs font-medium text-white truncate">Buffer Connected</p>
+                  <p className="text-[10px] text-neutral-500">Live API Active</p>
+                </div>
               </div>
-            ) : (
-              <a
-                href="/api/auth/buffer/login"
-                className="flex items-center space-x-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-lg transition shadow-md shadow-blue-600/20"
+              <button
+                onClick={handleBufferLogout}
+                className="text-neutral-400 hover:text-rose-400 p-1.5 transition"
+                title="Disconnect"
               >
-                <Share2 className="w-4 h-4" />
-                <span>Connect Buffer Account</span>
-              </a>
+                <LogOut className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <a
+              href="/api/auth/buffer/login"
+              className="w-full bg-[#1f2127] hover:bg-[#282a32] border border-[#2e3038] text-neutral-200 text-xs font-medium py-2 px-3 rounded-lg flex items-center justify-center space-x-1.5 transition"
+            >
+              <Share2 className="w-3.5 h-3.5 text-neutral-300" />
+              <span>Connect Buffer</span>
+            </a>
+          )}
+        </div>
+      </aside>
+
+      {/* 2. MAIN WORKSPACE */}
+      <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#0c0d10]">
+        {/* Top Header Bar (Buffer Layout) */}
+        <header className="h-14 border-b border-[#24262c] bg-[#101114] px-6 flex items-center justify-between select-none">
+          {/* Repository Selector */}
+          <form onSubmit={handleRepoSubmit} className="flex items-center space-x-3">
+            <div className="flex items-center space-x-2 text-xs text-neutral-400 font-mono bg-[#16171b] border border-[#272930] px-3 py-1.5 rounded-lg focus-within:border-neutral-400">
+              <Terminal className="w-3.5 h-3.5 text-neutral-400" />
+              <input
+                type="text"
+                value={repoInput}
+                onChange={(e) => setRepoInput(e.target.value)}
+                placeholder="owner/repo"
+                className="bg-transparent text-white focus:outline-none w-56 font-mono text-xs"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={loadingRepo}
+              className="bg-[#1e2025] hover:bg-[#272930] border border-[#2d3039] text-neutral-300 text-xs font-medium px-3 py-1.5 rounded-lg transition"
+            >
+              {loadingRepo ? <RefreshCw className="w-3 h-3 animate-spin" /> : <span>Fetch</span>}
+            </button>
+            {repoMeta.stars !== undefined && repoMeta.stars > 0 && (
+              <span className="text-[11px] font-mono text-neutral-400">★ {repoMeta.stars.toLocaleString()}</span>
             )}
-          </div>
-        </div>
-      </header>
+          </form>
 
-      {/* Main Container */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-6 space-y-6">
-        {/* Navigation Tabs */}
-        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-          <div className="flex space-x-2">
-            <button
-              onClick={() => setActiveTab('studio')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
-                activeTab === 'studio'
-                  ? 'bg-blue-600/10 text-blue-400 border border-blue-500/30'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>Interactive Release Studio</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('webhook')}
-              className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
-                activeTab === 'webhook'
-                  ? 'bg-indigo-600/10 text-indigo-400 border border-indigo-500/30'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              <Zap className="w-4 h-4" />
-              <span>Zero-Touch Webhook (&quot;Build &amp; Forget&quot;)</span>
-            </button>
-          </div>
+          {/* Right Action Tools: Tone & Queue All */}
+          <div className="flex items-center space-x-3">
+            {/* Tone Selector Dropdown */}
+            <div className="flex items-center space-x-1.5 bg-[#16171b] border border-[#272930] px-2.5 py-1 rounded-lg text-xs text-neutral-300">
+              <Sliders className="w-3 h-3 text-neutral-400" />
+              <select
+                value={tone}
+                onChange={(e) => handleToneChange(e.target.value as PostTone)}
+                className="bg-transparent text-xs text-neutral-200 focus:outline-none cursor-pointer"
+              >
+                <option value="punchy" className="bg-[#121316]">Punchy ⚡</option>
+                <option value="indie" className="bg-[#121316]">BuildInPublic 🚀</option>
+                <option value="professional" className="bg-[#121316]">Professional 💼</option>
+                <option value="storytelling" className="bg-[#121316]">Story Breakdown 📖</option>
+              </select>
+            </div>
 
-          {/* Quick preset selector for judges */}
-          <div className="flex items-center space-x-2 text-xs text-slate-400">
-            <span>Quick Presets:</span>
-            <button
-              onClick={() => {
-                setRepoInput('bufferapp/buffer-sample-apps');
-                fetchReleases('bufferapp', 'buffer-sample-apps', tone);
-              }}
-              className="hover:text-blue-400 bg-slate-800/60 px-2 py-1 rounded border border-slate-700/50"
-            >
-              buffer-sample-apps
-            </button>
-            <button
-              onClick={() => {
-                setRepoInput('facebook/react');
-                fetchReleases('facebook', 'react', tone);
-              }}
-              className="hover:text-blue-400 bg-slate-800/60 px-2 py-1 rounded border border-slate-700/50"
-            >
-              facebook/react
-            </button>
+            {/* Quick Presets */}
+            <div className="hidden md:flex items-center space-x-1.5 text-xs text-neutral-400">
+              <button
+                onClick={() => {
+                  setRepoInput('facebook/react');
+                  fetchReleases('facebook', 'react', tone);
+                }}
+                className="hover:text-white bg-[#16171b] border border-[#272930] px-2 py-1 rounded text-[11px]"
+              >
+                react
+              </button>
+              <button
+                onClick={() => {
+                  setRepoInput('bufferapp/buffer-sample-apps');
+                  fetchReleases('bufferapp', 'buffer-sample-apps', tone);
+                }}
+                className="hover:text-white bg-[#16171b] border border-[#272930] px-2 py-1 rounded text-[11px]"
+              >
+                sample-apps
+              </button>
+            </div>
           </div>
-        </div>
+        </header>
 
-        {/* Global Error Banner */}
+        {/* Status Alerts */}
         {errorMessage && (
-          <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-4 flex items-center space-x-3 text-rose-300 text-sm">
-            <AlertCircle className="w-5 h-5 flex-shrink-0 text-rose-400" />
-            <p>{errorMessage}</p>
+          <div className="mx-6 mt-4 p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <AlertCircle className="w-4 h-4 text-rose-400" />
+              <span>{errorMessage}</span>
+            </div>
+            <button onClick={() => setErrorMessage('')} className="text-rose-400 hover:text-white">✕</button>
           </div>
         )}
 
-        {/* Global Success Banner */}
         {publishResult && (
-          <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-4 flex items-center justify-between text-emerald-300 text-sm">
-            <div className="flex items-center space-x-3">
-              <CheckCircle2 className="w-5 h-5 flex-shrink-0 text-emerald-400" />
-              <div>
-                <p className="font-semibold">Successfully queued to Buffer!</p>
-                <p className="text-xs text-emerald-400/80">
-                  Created {publishResult.count} {publishResult.mode === 'draft' ? 'draft post(s)' : 'scheduled post(s)'} across selected channels.
-                </p>
-              </div>
+          <div className="mx-6 mt-4 p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 text-xs flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span>Successfully queued {publishResult.count} post(s) into Buffer drafts!</span>
             </div>
             <a
               href="https://publish.buffer.com"
               target="_blank"
               rel="noreferrer"
-              className="flex items-center space-x-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-xs px-3 py-1.5 rounded-lg transition"
+              className="text-emerald-400 underline font-semibold flex items-center space-x-1"
             >
-              <span>View in Buffer</span>
-              <ExternalLink className="w-3.5 h-3.5" />
+              <span>Open in Buffer</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
             </a>
           </div>
         )}
 
-        {/* TAB 1: STUDIO */}
-        {activeTab === 'studio' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Left Column: Repository & Release Settings */}
-            <div className="lg:col-span-5 space-y-6">
-              {/* GitHub Repo Input Box */}
-              <div className="bg-[#0e1628] border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center space-x-2">
-                    <Terminal className="w-4 h-4 text-blue-400" />
-                    <span>GitHub Repository</span>
-                  </label>
-                  {repoMeta.stars !== undefined && repoMeta.stars > 0 && (
-                    <span className="text-xs text-amber-400 font-mono">★ {repoMeta.stars.toLocaleString()}</span>
-                  )}
-                </div>
-
-                <form onSubmit={handleRepoSubmit} className="flex space-x-2">
-                  <input
-                    type="text"
-                    value={repoInput}
-                    onChange={(e) => setRepoInput(e.target.value)}
-                    placeholder="owner/repo"
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3.5 py-2 text-sm text-slate-100 focus:outline-none focus:border-blue-500 font-mono"
-                  />
-                  <button
-                    type="submit"
-                    disabled={loadingRepo}
-                    className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-xs font-semibold px-4 py-2 rounded-lg transition flex items-center space-x-1.5"
-                  >
-                    {loadingRepo ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <span>Fetch</span>}
-                  </button>
-                </form>
-
-                {/* Release Selector */}
-                {releases.length > 0 && (
-                  <div className="space-y-2 pt-2">
-                    <label className="text-xs text-slate-400 font-medium">Selected Release:</label>
-                    <select
-                      value={selectedReleaseIndex}
-                      onChange={(e) => setSelectedReleaseIndex(Number(e.target.value))}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-slate-200 focus:outline-none focus:border-blue-500"
-                    >
-                      {releases.map((rel, idx) => (
-                        <option key={rel.id} value={idx}>
-                          {rel.tagName} — {rel.name} ({new Date(rel.publishedAt).toLocaleDateString()})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-
-              {/* Tone & AI Generation Controls */}
-              <div className="bg-[#0e1628] border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center space-x-2">
-                    <Sliders className="w-4 h-4 text-purple-400" />
-                    <span>Copy Tone &amp; Angle</span>
-                  </label>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
-                  {[
-                    { id: 'punchy', label: '⚡ Punchy & Direct' },
-                    { id: 'indie', label: '🚀 Indie / BuildInPublic' },
-                    { id: 'professional', label: '💼 Professional Tech' },
-                    { id: 'storytelling', label: '📖 Story Breakdown' },
-                  ].map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => handleToneChange(t.id as PostTone)}
-                      className={`text-xs text-left p-2.5 rounded-lg border transition font-medium ${
-                        tone === t.id
-                          ? 'bg-blue-600/10 border-blue-500 text-blue-300'
-                          : 'bg-slate-900/60 border-slate-800 text-slate-400 hover:border-slate-700'
-                      }`}
-                    >
-                      {t.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Buffer Channels Destination */}
-              <div className="bg-[#0e1628] border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold uppercase tracking-wider text-slate-400 flex items-center space-x-2">
-                    <Layers className="w-4 h-4 text-emerald-400" />
-                    <span>Target Social Channels</span>
-                  </label>
-                  <span className="text-xs text-slate-500">
-                    {selectedChannels.length} of {channels.length} selected
-                  </span>
-                </div>
-
-                <div className="space-y-2">
-                  {channels.map((ch) => {
-                    const isSelected = selectedChannels.includes(ch.id);
-                    return (
-                      <div
-                        key={ch.id}
-                        onClick={() => {
-                          if (isSelected) {
-                            setSelectedChannels(selectedChannels.filter((id) => id !== ch.id));
-                          } else {
-                            setSelectedChannels([...selectedChannels, ch.id]);
-                          }
-                        }}
-                        className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition ${
-                          isSelected
-                            ? 'bg-slate-900/90 border-blue-500/50 text-white'
-                            : 'bg-slate-950/40 border-slate-800 text-slate-400 hover:border-slate-700'
-                        }`}
-                      >
-                        <div className="flex items-center space-x-3">
-                          <div className="w-7 h-7 rounded-lg bg-slate-800 flex items-center justify-center text-xs font-bold uppercase text-slate-300">
-                            {ch.service.slice(0, 2)}
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-slate-200">{ch.name}</p>
-                            <p className="text-[10px] text-slate-500 capitalize">{ch.service}</p>
-                          </div>
-                        </div>
-                        <input
-                          type="checkbox"
-                          checked={isSelected}
-                          onChange={() => {}}
-                          className="h-4 w-4 rounded border-slate-700 text-blue-600 focus:ring-blue-500"
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-
-                {/* Media card toggle */}
-                <div className="pt-2 border-t border-slate-800 flex items-center justify-between text-xs text-slate-300">
-                  <div className="flex items-center space-x-2">
-                    <Eye className="w-4 h-4 text-sky-400" />
-                    <span>Attach Dynamic Release Card</span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    checked={includeImageCard}
-                    onChange={(e) => setIncludeImageCard(e.target.checked)}
-                    className="h-4 w-4 rounded border-slate-700 text-blue-600 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Right Column: Live Multi-Platform Preview & Queue Actions */}
-            <div className="lg:col-span-7 space-y-6">
-              {/* Platform Switcher Tabs */}
-              <div className="bg-[#0e1628] border border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-                  <div className="flex space-x-2">
-                    {(['linkedin', 'twitter', 'bluesky', 'threads'] as SocialPlatform[]).map((plat) => (
-                      <button
-                        key={plat}
-                        onClick={() => setActivePlatform(plat)}
-                        className={`text-xs font-semibold px-3 py-1.5 rounded-lg capitalize transition ${
-                          activePlatform === plat
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-slate-900 text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        {plat === 'twitter' ? 'X / Twitter' : plat}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Character Counter */}
-                  <div className="text-xs font-mono text-slate-400">
-                    <span
-                      className={
-                        activePlatform === 'twitter' && editedText.length > 280
-                          ? 'text-rose-400 font-bold'
-                          : 'text-slate-300'
-                      }
-                    >
-                      {editedText.length}
-                    </span>
-                    <span className="text-slate-600">
-                      {' '}
-                      / {activePlatform === 'twitter' ? 280 : activePlatform === 'bluesky' ? 300 : 3000}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Editable Social Post Textarea */}
-                <div className="space-y-2">
-                  <textarea
-                    rows={8}
-                    value={editedText}
-                    onChange={(e) => setEditedText(e.target.value)}
-                    placeholder="Generating post copy..."
-                    className="w-full bg-slate-900/90 border border-slate-700/80 rounded-lg p-3.5 text-sm text-slate-100 focus:outline-none focus:border-blue-500 leading-relaxed font-sans"
-                  />
-                </div>
-
-                {/* Release Card Visual Preview */}
-                {includeImageCard && previewCardUrl && (
-                  <div className="space-y-2 pt-2 border-t border-slate-800">
-                    <div className="flex items-center justify-between text-xs text-slate-400">
-                      <span>Generated Social Image (Auto-hosted for Buffer)</span>
+        {/* 3. CONTENT AREA (Scrollable Studio Feed) */}
+        <div className="flex-1 overflow-y-auto p-8 space-y-6">
+          {currentNav === 'studio' && (
+            <div className="max-w-4xl mx-auto space-y-6">
+              {/* Release Header Banner */}
+              {currentRelease && (
+                <div className="flex items-center justify-between pb-4 border-b border-[#24262c]">
+                  <div className="space-y-1">
+                    <div className="flex items-center space-x-2.5">
+                      <h1 className="text-base font-bold text-white tracking-tight">
+                        {currentRelease.tagName} — {currentRelease.name}
+                      </h1>
                       <a
-                        href={previewCardUrl}
+                        href={currentRelease.htmlUrl}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-blue-400 hover:underline flex items-center space-x-1"
+                        className="text-neutral-400 hover:text-white transition"
+                        title="View on GitHub"
                       >
-                        <span>Open Full Card</span>
-                        <ChevronRight className="w-3 h-3" />
+                        <ExternalLink className="w-3.5 h-3.5" />
                       </a>
                     </div>
-                    <div className="rounded-lg overflow-hidden border border-slate-800 bg-slate-950 aspect-[1200/630] relative shadow-inner">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img
-                        src={previewCardUrl}
-                        alt="Release Card Preview"
-                        className="w-full h-full object-cover"
+                    <p className="text-xs text-neutral-400">
+                      Published on {new Date(currentRelease.publishedAt).toLocaleDateString('en-US', { day: 'numeric', month: 'long', year: 'numeric' })}
+                    </p>
+                  </div>
+
+                  {/* Releases Switcher Dropdown */}
+                  {releases.length > 1 && (
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs text-neutral-500">Release:</span>
+                      <select
+                        value={selectedReleaseIndex}
+                        onChange={(e) => setSelectedReleaseIndex(Number(e.target.value))}
+                        className="bg-[#16171b] border border-[#272930] rounded-lg px-2.5 py-1 text-xs text-neutral-200 focus:outline-none"
+                      >
+                        {releases.map((rel, idx) => (
+                          <option key={rel.id} value={idx}>
+                            {rel.tagName} ({new Date(rel.publishedAt).toLocaleDateString()})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Media Card Toggle */}
+              <div className="flex items-center justify-between px-4 py-2.5 rounded-lg bg-[#141519] border border-[#24262c] text-xs text-neutral-300">
+                <div className="flex items-center space-x-2">
+                  <ImageIcon className="w-3.5 h-3.5 text-neutral-400" />
+                  <span>Attach Dynamic Release Card (Hosted for Buffer API)</span>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={includeImageCard}
+                  onChange={(e) => setIncludeImageCard(e.target.checked)}
+                  className="w-4 h-4 rounded border-[#3a3d46] bg-[#1a1b20] accent-white cursor-pointer"
+                />
+              </div>
+
+              {/* POST CARDS TIMELINE (Exact Buffer Feed Aesthetic) */}
+              <div className="space-y-4">
+                {(['linkedin', 'twitter', 'bluesky', 'threads'] as SocialPlatform[]).map((platform) => {
+                  const content = editedPosts[platform];
+                  const maxChars = platform === 'twitter' ? 280 : platform === 'bluesky' ? 300 : 3000;
+                  const isOver = content.length > maxChars;
+
+                  return (
+                    <div
+                      key={platform}
+                      className="rounded-xl bg-[#16171b] border border-[#24262c] hover:border-[#2d3039] transition-all duration-150 p-5 space-y-4 shadow-sm"
+                    >
+                      {/* Card Header */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-3">
+                          <div className="relative w-8 h-8 rounded-lg bg-[#202228] flex items-center justify-center text-xs font-bold text-white border border-[#2c2f38]">
+                            {platform === 'twitter' ? 'X' : platform.slice(0, 2).toUpperCase()}
+                            <span className="absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full bg-[#121316] flex items-center justify-center">
+                              {getPlatformIcon(platform)}
+                            </span>
+                          </div>
+                          <div>
+                            <div className="flex items-center space-x-2">
+                              <span className="text-xs font-semibold text-white capitalize">
+                                {platform === 'twitter' ? 'X / Twitter' : platform}
+                              </span>
+                              <span className="text-[10px] text-neutral-500 font-mono">Channel Adaptor</span>
+                            </div>
+                            <p className="text-[11px] text-neutral-400">
+                              Formatted for {platform === 'twitter' ? 'short-form brevity' : platform === 'linkedin' ? 'professional storytelling' : 'casual updates'}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Character count indicator */}
+                        <div className="flex items-center space-x-2 text-xs font-mono">
+                          <span className={isOver ? 'text-rose-400 font-bold' : 'text-neutral-400'}>
+                            {content.length}
+                          </span>
+                          <span className="text-neutral-600">/ {maxChars}</span>
+                        </div>
+                      </div>
+
+                      {/* Card Body: Editable Textarea */}
+                      <textarea
+                        rows={platform === 'linkedin' ? 6 : 4}
+                        value={content}
+                        onChange={(e) =>
+                          setEditedPosts({
+                            ...editedPosts,
+                            [platform]: e.target.value,
+                          })
+                        }
+                        className="w-full bg-[#111215] border border-[#24262c] focus:border-[#3d404c] rounded-lg p-3.5 text-xs text-neutral-200 focus:outline-none leading-relaxed font-sans resize-y"
                       />
+
+                      {/* Card Footer: Actions */}
+                      <div className="pt-2 flex items-center justify-between border-t border-[#22242a]">
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(content);
+                            }}
+                            className="text-neutral-400 hover:text-white p-1.5 rounded transition text-xs flex items-center space-x-1"
+                            title="Copy to clipboard"
+                          >
+                            <Copy className="w-3 h-3" />
+                            <span>Copy</span>
+                          </button>
+                        </div>
+
+                        <div className="flex items-center space-x-2">
+                          <button
+                            onClick={() => handlePublishToBuffer(true, content)}
+                            disabled={publishing}
+                            className="bg-[#1f2127] hover:bg-[#282a32] border border-[#2e3038] text-neutral-200 text-xs font-medium py-1.5 px-3 rounded-lg flex items-center space-x-1.5 transition"
+                          >
+                            <Send className="w-3 h-3 text-neutral-400" />
+                            <span>Save Draft to Buffer</span>
+                          </button>
+
+                          <button
+                            onClick={() => handlePublishToBuffer(false, content)}
+                            disabled={publishing}
+                            className="bg-[#f4f4f6] hover:bg-white text-neutral-950 text-xs font-semibold py-1.5 px-3.5 rounded-lg flex items-center space-x-1.5 transition shadow-sm"
+                          >
+                            <Share2 className="w-3 h-3 text-neutral-950" />
+                            <span>Schedule to Buffer</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Dynamic OG Card Visual Preview */}
+              {includeImageCard && previewCardUrl && (
+                <div className="rounded-xl bg-[#16171b] border border-[#24262c] p-5 space-y-3">
+                  <div className="flex items-center justify-between text-xs text-neutral-400">
+                    <span className="font-semibold text-white">Dynamic Visual Card (Generated at Edge)</span>
+                    <a
+                      href={previewCardUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-neutral-400 hover:text-white flex items-center space-x-1"
+                    >
+                      <span>Open image URL</span>
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                  <div className="rounded-lg overflow-hidden border border-[#22242a] bg-[#0c0d10] aspect-[1200/630] relative shadow-inner">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={previewCardUrl}
+                      alt="Release Social Card"
+                      className="w-full h-full object-cover"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: AUTOMATION WEBHOOK */}
+          {currentNav === 'webhook' && (
+            <div className="max-w-2xl mx-auto space-y-6">
+              <div className="rounded-xl bg-[#16171b] border border-[#24262c] p-6 space-y-5">
+                <div className="flex items-center space-x-3">
+                  <div className="w-9 h-9 rounded-lg bg-[#202227] flex items-center justify-center text-white border border-[#2a2c34]">
+                    <Zap className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-white">Zero-Touch Automation (&quot;Build &amp; Forget&quot;)</h2>
+                    <p className="text-xs text-neutral-400">
+                      Whenever you publish a release or push a git tag, GitSocial drafts the update into Buffer.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 text-xs text-neutral-300">
+                  <p className="text-neutral-400">
+                    Set up this webhook once in your GitHub repository to eliminate manual social posting:
+                  </p>
+
+                  <ol className="list-decimal list-inside space-y-2 bg-[#101114] p-4 rounded-lg border border-[#24262c] font-mono text-neutral-300">
+                    <li>Go to your GitHub repo → <strong>Settings</strong> → <strong>Webhooks</strong>.</li>
+                    <li>Click <strong>Add webhook</strong>.</li>
+                    <li>Paste the Payload URL below.</li>
+                    <li>Set Content type to <code>application/json</code>.</li>
+                    <li>Trigger on <strong>Releases</strong>.</li>
+                  </ol>
+
+                  <div className="space-y-1.5 pt-2">
+                    <label className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider">
+                      Payload URL:
+                    </label>
+                    <div className="flex items-center space-x-2 bg-[#0e0f12] border border-[#272930] rounded-lg p-2.5 font-mono text-xs text-neutral-200">
+                      <span className="flex-1 truncate">
+                        {typeof window !== 'undefined'
+                          ? `${window.location.origin}/api/webhook/github`
+                          : '/api/webhook/github'}
+                      </span>
+                      <button
+                        onClick={() => {
+                          if (typeof window !== 'undefined') {
+                            navigator.clipboard.writeText(`${window.location.origin}/api/webhook/github`);
+                            setCopiedWebhook(true);
+                            setTimeout(() => setCopiedWebhook(false), 2000);
+                          }
+                        }}
+                        className="text-neutral-400 hover:text-white transition p-1"
+                      >
+                        {copiedWebhook ? (
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        ) : (
+                          <Copy className="w-3.5 h-3.5" />
+                        )}
+                      </button>
                     </div>
                   </div>
-                )}
-
-                {/* Action Buttons */}
-                <div className="pt-4 border-t border-slate-800 flex items-center justify-between">
-                  <div className="text-xs text-slate-400">
-                    <span>Target: </span>
-                    <strong className="text-slate-200">
-                      {selectedChannels.length} channel(s)
-                    </strong>
-                  </div>
-
-                  <div className="flex space-x-3">
-                    <button
-                      onClick={() => handlePublishToBuffer(true)}
-                      disabled={publishing}
-                      className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-lg transition flex items-center space-x-2"
-                    >
-                      {publishing ? (
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Send className="w-3.5 h-3.5 text-blue-400" />
-                      )}
-                      <span>Save as Buffer Draft (Safe)</span>
-                    </button>
-
-                    <button
-                      onClick={() => handlePublishToBuffer(false)}
-                      disabled={publishing}
-                      className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-5 py-2.5 rounded-lg transition flex items-center space-x-2 shadow-lg shadow-blue-600/20"
-                    >
-                      {publishing ? (
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      ) : (
-                        <Share2 className="w-3.5 h-3.5" />
-                      )}
-                      <span>Schedule to Buffer</span>
-                    </button>
-                  </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* TAB 2: ZERO-TOUCH WEBHOOK AUTOMATION */}
-        {activeTab === 'webhook' && (
-          <div className="max-w-4xl mx-auto space-y-6">
-            <div className="bg-[#0e1628] border border-slate-800 rounded-xl p-6 shadow-sm space-y-5">
-              <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
-                  <Zap className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-bold text-white">Zero-Touch Automation (&quot;Build &amp; Forget&quot;)</h2>
-                  <p className="text-xs text-slate-400">
-                    Automatically draft a post in Buffer every time you publish a new GitHub Release.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-4 text-xs text-slate-300">
-                <p>
-                  With GitSocial webhooks, you never need to leave your code editor. When your GitHub Action or team pushes a new release tag:
-                </p>
-
-                <ol className="list-decimal list-inside space-y-2 bg-slate-900/60 p-4 rounded-lg border border-slate-800 font-mono text-slate-300">
-                  <li>Go to your GitHub Repository → <strong>Settings</strong> → <strong>Webhooks</strong>.</li>
-                  <li>Click <strong>Add webhook</strong>.</li>
-                  <li>Set <strong>Payload URL</strong> to the URL below.</li>
-                  <li>Set <strong>Content type</strong> to <code>application/json</code>.</li>
-                  <li>Under triggers, select <strong>Let me select individual events</strong> → check <strong>Releases</strong>.</li>
-                </ol>
-
-                <div className="space-y-2 pt-2">
-                  <label className="text-xs font-semibold text-slate-400">Your Webhook URL:</label>
-                  <div className="flex items-center space-x-2 bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-xs text-blue-300">
-                    <span className="flex-1 truncate">
-                      {typeof window !== 'undefined' ? `${window.location.origin}/api/webhook/github` : '/api/webhook/github'}
-                    </span>
-                    <button
-                      onClick={() => {
-                        if (typeof window !== 'undefined') {
-                          navigator.clipboard.writeText(`${window.location.origin}/api/webhook/github`);
-                          setCopiedWebhook(true);
-                          setTimeout(() => setCopiedWebhook(false), 2000);
-                        }
-                      }}
-                      className="text-slate-400 hover:text-white transition p-1"
-                    >
-                      {copiedWebhook ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-      </main>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-800/80 mt-12 py-6 px-6 text-center text-xs text-slate-500">
-        <p>
-          GitSocial • Built for the <strong>Buffer Commit</strong> Hackathon • Powered by the Buffer GraphQL API
-        </p>
-      </footer>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
